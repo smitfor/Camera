@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -61,7 +61,7 @@ namespace Camera
                     cancellationTokenSource = new CancellationTokenSource();
                     ffmpegProcess.StartInfo.FileName = pathFfmpeg;
                     string outputFile = $"C:\\Users\\user\\Videos\\video_{DateTime.Now:yyyyMMdd_HHmmss}.avi";
-                    ffmpegProcess.StartInfo.Arguments = $"-f dshow -i video=\"{device}\" -vcodec libx264 -preset ultrafast -t 00:10:00 \"{outputFile}\" -vf fps=100 -f image2pipe -vcodec png pipe:1";
+                    ffmpegProcess.StartInfo.Arguments = $"-f dshow -i video=\"{device}\" -vcodec libx264 -preset ultrafast -t 00:10:00 \"{outputFile}\" -vf fps=10 -f image2pipe -vcodec png pipe:1";
 
                     ffmpegProcess.StartInfo.UseShellExecute = false;
                     ffmpegProcess.StartInfo.RedirectStandardOutput = true;
@@ -79,8 +79,6 @@ namespace Camera
                     ffmpegProcess.Start();
 
                     Stream outputStream = ffmpegProcess.StandardOutput.BaseStream;
-
-                    // Чтение данных изображения в отдельном потоке.
                     await Task.WhenAny(
                         ProcessFramesAsync(outputStream, pictureBox, cancellationTokenSource.Token),
                         Task.Run(() => ffmpegProcess.WaitForExit())
@@ -90,8 +88,8 @@ namespace Camera
                 {
                     MessageBox.Show($"Ошибка: {error.Message}");
                 }
-            
-        }
+
+            }
             public void StopRecord()
             {
                 if (ffmpegProcess != null && !ffmpegProcess.HasExited)
@@ -107,20 +105,27 @@ namespace Camera
             }
             private async Task ProcessFramesAsync(Stream stream, PictureBox pictureBox, CancellationToken cancellationToken)
             {
-                byte[] buffer = new byte[1024 * 1024]; 
-                int bytesRead = 0;
-
                 try
                 {
                     while (!cancellationToken.IsCancellationRequested)
                     {
-                        bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
-                        if (bytesRead <= 0)
-                            break;
-
-                        
-                        using (MemoryStream ms = new MemoryStream(buffer, 0, bytesRead))
+                        using (MemoryStream ms = new MemoryStream())
                         {
+                            byte[] buffer = new byte[8192];
+                            int bytesRead;
+
+                            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+                            {
+                                ms.Write(buffer, 0, bytesRead);
+
+                                // Проверяем, завершен ли поток PNG (по наличию секции IEND)
+                                if (ms.Length > 8 &&
+                                    ms.ToArray().Skip((int)ms.Length - 8).Take(4).SequenceEqual(new byte[] { 0x49, 0x45, 0x4E, 0x44 }))
+                                {
+                                    break;
+                                }
+                            }
+                            ms.Position = 0;
                             pictureBox.Invoke((MethodInvoker)(() =>
                             {
                                 pictureBox.Image = new Bitmap(ms);
